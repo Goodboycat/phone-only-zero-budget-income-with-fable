@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Simple Invoice Maker</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,Roboto,Arial,sans-serif;background:#eef1f5;color:#111}
+main{max-width:640px;margin:0 auto;padding:12px}
+h1{font-size:22px;margin:8px 4px 12px}
+.card{background:#fff;border-radius:12px;padding:14px;margin-bottom:12px}
+label{display:block;font-size:13px;font-weight:600;margin:10px 0 4px}
+input,textarea{width:100%;padding:11px;font-size:16px;border:1px solid #bbb;border-radius:8px;font-family:inherit}
+.row{display:grid;grid-template-columns:1fr 64px 92px 44px;gap:6px;margin-bottom:6px;align-items:center}
+.row button{height:44px;border:0;border-radius:8px;background:#fee2e2;color:#991b1b;font-size:18px}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.btn{width:100%;padding:14px;font-size:16px;font-weight:700;border:0;border-radius:10px;margin-top:8px}
+.add{background:#e0e7ff;color:#1e3a8a}
+.print{background:#1e3a8a;color:#fff}
+.clear{background:#fff;color:#991b1b;border:1px solid #991b1b}
+#paper{background:#fff;padding:18px;border-radius:12px}
+#paper h2{margin:0 0 2px;font-size:22px}
+#paper .muted{color:#555;font-size:13px;white-space:pre-line}
+#paper .top{display:flex;justify-content:space-between;gap:12px;margin-bottom:14px}
+#paper .right{text-align:right}
+table{width:100%;border-collapse:collapse;font-size:14px;margin-top:8px}
+th,td{padding:7px 4px;border-bottom:1px solid #ddd;text-align:right}
+th:first-child,td:first-child{text-align:left}
+tfoot td{border:0;font-weight:600}
+tfoot tr.grand td{font-size:17px;border-top:2px solid #111}
+.hint{font-size:13px;color:#555;margin:6px 4px}
+@media print{
+  body{background:#fff}
+  .noprint{display:none!important}
+  main{max-width:none;padding:0}
+  #paper{border-radius:0;padding:0}
+}
+</style>
+</head>
+<body>
+<main>
+<div class="noprint">
+  <h1>Simple Invoice Maker</h1>
+  <div class="card">
+    <label for="from">Your business name</label><input id="from">
+    <label for="fromInfo">Your phone / address</label><textarea id="fromInfo" rows="2"></textarea>
+    <label for="to">Customer name</label><input id="to">
+    <div class="two">
+      <div><label for="num">Invoice number</label><input id="num"></div>
+      <div><label for="date">Date</label><input id="date" type="date"></div>
+    </div>
+    <div class="two">
+      <div><label for="cur">Currency sign</label><input id="cur" maxlength="5"></div>
+      <div><label for="tax">Tax % (0 if none)</label><input id="tax" type="number" inputmode="decimal" min="0" step="any"></div>
+    </div>
+  </div>
+  <div class="card">
+    <label>Items (description, quantity, unit price)</label>
+    <div id="rows"></div>
+    <button class="btn add" id="addRow" type="button">+ Add item</button>
+  </div>
+  <div class="card">
+    <label for="note">Note (payment details, thank-you)</label><textarea id="note" rows="2"></textarea>
+    <button class="btn print" id="print" type="button">Print / Save as PDF</button>
+    <button class="btn clear" id="clear" type="button">Clear everything</button>
+    <p class="hint">On Android: tap Print, then choose "Save as PDF". Everything you type stays on this phone only.</p>
+  </div>
+  <p class="hint">Preview</p>
+</div>
+<div id="paper">
+  <div class="top">
+    <div><h2 id="pFrom"></h2><div class="muted" id="pFromInfo"></div></div>
+    <div class="right"><strong>INVOICE</strong><div class="muted" id="pMeta"></div></div>
+  </div>
+  <div class="muted">Bill to</div><div id="pTo" style="font-weight:600"></div>
+  <table>
+    <thead><tr><th>Description</th><th>Qty</th><th>Price</th><th>Amount</th></tr></thead>
+    <tbody id="pBody"></tbody>
+    <tfoot>
+      <tr><td colspan="3">Subtotal</td><td id="pSub"></td></tr>
+      <tr id="taxRow"><td colspan="3" id="pTaxLabel"></td><td id="pTax"></td></tr>
+      <tr class="grand"><td colspan="3">Total</td><td id="pTotal"></td></tr>
+    </tfoot>
+  </table>
+  <p class="muted" id="pNote"></p>
+</div>
+</main>
+<script>
+var KEY="simple-invoice-v1";
+function num(v){ var n=parseFloat(String(v).replace(",",".")); return isFinite(n)&&n>0?n:0; }
+function round2(n){ return Math.round((n+Number.EPSILON)*100)/100; }
+function calc(items, taxPct){
+  var sub=0, lines=[];
+  items.forEach(function(i){
+    var q=num(i.qty), p=num(i.price), amt=round2(q*p);
+    if(String(i.desc||"").trim()||amt>0){ lines.push({desc:i.desc||"",qty:q,price:p,amount:amt}); sub+=amt; }
+  });
+  sub=round2(sub);
+  var tax=round2(sub*num(taxPct)/100);
+  return {lines:lines, subtotal:sub, tax:tax, total:round2(sub+tax)};
+}
+function fmt(cur,n){ return (cur||"")+n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,","); }
+
+if(typeof document!=="undefined"){(function(){
+  var $=function(id){return document.getElementById(id);};
+  var fields=["from","fromInfo","to","num","date","cur","tax","note"];
+  var state={items:[{desc:"",qty:"1",price:""}]};
+  function load(){
+    try{ var s=JSON.parse(localStorage.getItem(KEY)); if(s&&Array.isArray(s.items)&&s.items.length) state=s; }catch(e){}
+    if(!state.date) state.date=new Date().toISOString().slice(0,10);
+    if(state.cur==null) state.cur="$";
+    if(!state.num) state.num="001";
+    fields.forEach(function(f){ $(f).value=state[f]||""; });
+  }
+  function save(){ try{ localStorage.setItem(KEY,JSON.stringify(state)); }catch(e){} }
+  function drawRows(){
+    var box=$("rows"); box.textContent="";
+    state.items.forEach(function(it,idx){
+      var row=document.createElement("div"); row.className="row";
+      [["desc","Description","text"],["qty","Qty","decimal"],["price","Price","decimal"]].forEach(function(d){
+        var inp=document.createElement("input");
+        inp.placeholder=d[1]; inp.setAttribute("aria-label",d[1]+" for item "+(idx+1));
+        if(d[2]==="decimal") inp.setAttribute("inputmode","decimal");
+        inp.value=it[d[0]]||"";
+        inp.oninput=function(){ it[d[0]]=inp.value; preview(); };
+        row.appendChild(inp);
+      });
+      var del=document.createElement("button"); del.type="button"; del.textContent="\u00d7";
+      del.setAttribute("aria-label","Remove item "+(idx+1));
+      del.onclick=function(){ state.items.splice(idx,1); if(!state.items.length) state.items.push({desc:"",qty:"1",price:""}); drawRows(); preview(); };
+      row.appendChild(del); box.appendChild(row);
+    });
+  }
+  function preview(){
+    var r=calc(state.items,state.tax), cur=state.cur;
+    $("pFrom").textContent=state.from||"Your business";
+    $("pFromInfo").textContent=state.fromInfo||"";
+    $("pTo").textContent=state.to||"-";
+    $("pMeta").textContent="No. "+(state.num||"-")+"\n"+(state.date||"");
+    var body=$("pBody"); body.textContent="";
+    r.lines.forEach(function(l){
+      var tr=document.createElement("tr");
+      [l.desc, String(l.qty), fmt(cur,l.price), fmt(cur,l.amount)].forEach(function(t){ var td=document.createElement("td"); td.textContent=t; tr.appendChild(td); });
+      body.appendChild(tr);
+    });
+    $("pSub").textContent=fmt(cur,r.subtotal);
+    $("taxRow").style.display=num(state.tax)>0?"":"none";
+    $("pTaxLabel").textContent="Tax ("+num(state.tax)+"%)";
+    $("pTax").textContent=fmt(cur,r.tax);
+    $("pTotal").textContent=fmt(cur,r.total);
+    $("pNote").textContent=state.note||"";
+    save();
+  }
+  load(); drawRows(); preview();
+  fields.forEach(function(f){ $(f).oninput=function(){ state[f]=$(f).value; preview(); }; });
+  $("addRow").onclick=function(){ state.items.push({desc:"",qty:"1",price:""}); drawRows(); preview(); };
+  $("print").onclick=function(){ window.print(); };
+  $("clear").onclick=function(){
+    if(!confirm("Clear all fields?")) return;
+    try{ localStorage.removeItem(KEY); }catch(e){}
+    state={items:[{desc:"",qty:"1",price:""}]}; load(); drawRows(); preview();
+  };
+})();}
+if(typeof module!=="undefined") module.exports={calc:calc,fmt:fmt,num:num};
+</script>
+</body>
+</html>
